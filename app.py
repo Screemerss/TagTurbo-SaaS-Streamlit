@@ -47,6 +47,9 @@ TEXT_LABELS = {
         'key_success_toast': "Accesso Pro sbloccato con successo!",
         'language_selector': "Seleziona Lingua",
         'search_error': "Si è verificato un errore inaspettato durante la ricerca: {}",
+        # NUOVO TESTO PER IL FILTRO PRO
+        'pro_filter_header': "Filtro Avanzato PRO",
+        'pro_filter_tooltip': "Inserisci le parole chiave da ESCLUDERE (separate da virgole). Utile per rimuovere tag stranieri o non pertinenti (es. 'spagnolo, trading, nome competitor').",
     },
     'en': {
         'page_title': "TagTurbo: Video SEO Optimizer",
@@ -81,6 +84,9 @@ TEXT_LABELS = {
         'key_success_toast': "Pro access unlocked successfully!",
         'language_selector': "Select Language",
         'search_error': "An unexpected error occurred during the search: {}",
+        # NUOVO TESTO PER IL FILTRO PRO
+        'pro_filter_header': "Advanced PRO Filter",
+        'pro_filter_tooltip': "Enter keywords to EXCLUDE (separated by commas). Useful for removing foreign or irrelevant tags (e.g., 'spanish, trading, competitor name').",
     }
 }
 
@@ -100,9 +106,11 @@ def get_text(key, lang=None):
 # =================================================================
 
 try:
+    # La chiave Ko-fi viene letta da st.secrets in modo sicuro
     KOFI_PRO_KEY = st.secrets["kofi_key"]
 except KeyError:
-    KOFI_PRO_KEY = "CHIAVE_DI_TEST_LOCALE" 
+    # Valore di fallback per test locali.
+    KOFI_PRO_KEY = "SCREEMERSS_PRO_2024" 
 
 KOFI_MEMBERSHIP_LINK = "https://ko-fi.com/screemerss/tiers"
 MAX_FREE_USES = 5 
@@ -118,9 +126,12 @@ USER_AGENTS = [
 # ⚙️ Configurazione della Pagina e Stato della Sessione
 # =================================================================
 
-# Imposta lingua predefinita
 if 'language' not in st.session_state:
     st.session_state.language = 'it'
+if 'count' not in st.session_state:
+    st.session_state.count = 0
+if 'is_pro' not in st.session_state:
+    st.session_state.is_pro = False
 
 st.set_page_config(
     page_title=get_text('page_title'),
@@ -128,38 +139,45 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inizializza lo stato della sessione per la monetizzazione
-if 'count' not in st.session_state:
-    st.session_state.count = 0
-if 'is_pro' not in st.session_state:
-    st.session_state.is_pro = False
-
-
 # =================================================================
 # ☕ Funzione per la Gestione dell'Accesso Pro (Sidebar)
 # =================================================================
 
 def handle_kofi_access():
-    """Gestisce la logica di verifica della chiave Ko-fi nella sidebar."""
+    """Gestisce la logica di verifica della chiave Ko-fi e il selettore lingua."""
+    
+    # 1. Selettore di Lingua (Sempre visibile)
     with st.sidebar:
-        # Selettore di Lingua
         st.session_state.language = st.selectbox(
-            get_text('language_selector', lang='it'), # Usa sempre il testo IT per il selettore se non in sessione
+            get_text('language_selector', lang='it'), 
             options=['it', 'en'],
             format_func=lambda x: 'Italiano' if x == 'it' else 'English',
             key='lang_select'
         )
         
+        # 2. Gestione Accesso PRO
         st.header(get_text('sidebar_header'))
         
         if st.session_state.is_pro:
             st.success(get_text('pro_active'))
             st.markdown(get_text('free_uses_caption').format(st.session_state.count))
+            
+            # 3. FILTRO ESCLUSIVO PRO (NUOVO)
+            st.markdown("---")
+            st.subheader(get_text('pro_filter_header'))
+            # Aggiunge un campo input per le parole chiave da escludere
+            st.text_input(
+                get_text('pro_filter_tooltip'),
+                key='exclude_keywords_input',
+                help=get_text('pro_filter_tooltip'),
+                placeholder='Esempio: spagnolo, trading, competitor_xyz'
+            )
+            st.markdown("---") # Separatore dopo il filtro
+            
         else:
             st.markdown(get_text('free_cta_text'))
             st.markdown(get_text('pro_link_text').format(KOFI_MEMBERSHIP_LINK))
 
-            # Campo per inserire la chiave
             user_key = st.text_input(get_text('pro_key_input'), type="password")
             
             if st.button(get_text('unlock_button')):
@@ -174,40 +192,41 @@ def handle_kofi_access():
 # 🛠️ Logica Unica dello Script: Estrazione Tag Competitor
 # =================================================================
 
-def get_optimized_tags(query):
+def get_optimized_tags(query, exclude_keywords):
     """
-    Cerca su YouTube i video più rilevanti usando la libreria youtube-search-python,
-    poi estrae i tag dai metadati di ogni pagina video.
+    Cerca su YouTube i video più rilevanti e estrae i tag, applicando il filtro di esclusione.
     """
     if not query:
         return [], []
         
-    st.info(get_text('analysis_in_progress').replace('...', f": **{query}**...")) # Breve hack per usare la stringa di info
+    st.info(get_text('analysis_in_progress').split('...')[0] + f": **{query}**...")
     
     headers = {
         'User-Agent': random.choice(USER_AGENTS) 
     }
     
+    # Prepara le parole da escludere (convertendole in minuscolo e pulendole)
+    exclude_set = set()
+    if exclude_keywords:
+        for word in exclude_keywords.lower().split(','):
+            exclude_set.add(word.strip())
+    
     try:
         # 1. CERCA I LINK AI VIDEO YOUTUBE USANDO LA LIBRERIA
-        
         limit = 10 if st.session_state.is_pro else 5
         
         videosSearch = VideosSearch(query, limit=limit)
         results = videosSearch.result()
-        
-        youtube_links = []
-        for video in results.get('result', []):
-            youtube_links.append(video['link'])
+        youtube_links = [video['link'] for video in results.get('result', [])]
 
         if not youtube_links:
             st.error(get_text('no_tags_found'))
             return [], []
 
-        # 2. ESTRAZIONE DEI TAG DA OGNI VIDEO (Tramite scraping dei meta-tag)
+        # 2. ESTRAZIONE E FILTRAGGIO DEI TAG
         all_competitor_tags = set()
         
-        for i, url in enumerate(youtube_links):
+        for url in youtube_links:
             try:
                 time.sleep(random.uniform(0.5, 1.5))
                 video_response = requests.get(url, headers=headers, timeout=7) 
@@ -221,7 +240,21 @@ def get_optimized_tags(query):
             except requests.exceptions.RequestException:
                 continue 
                 
-        # 3. SUDDIVISIONE E CLASSIFICAZIONE
+        # 3. APPLICAZIONE DEL FILTRO DI ESCLUSIONE (Riservato agli utenti PRO)
+        if st.session_state.is_pro and exclude_set:
+            filtered_tags = set()
+            for tag in all_competitor_tags:
+                is_excluded = False
+                for excluded_word in exclude_set:
+                    # Controlla se una parola esclusa è contenuta nel tag
+                    if excluded_word in tag:
+                        is_excluded = True
+                        break
+                if not is_excluded:
+                    filtered_tags.add(tag)
+            all_competitor_tags = filtered_tags
+        
+        # 4. SUDDIVISIONE E CLASSIFICAZIONE
         high_perf_tags = sorted(list({tag for tag in all_competitor_tags if len(tag.split()) <= 2})) 
         low_comp_tags = sorted(list({tag for tag in all_competitor_tags if len(tag.split()) > 2}))
         
@@ -239,6 +272,7 @@ def get_optimized_tags(query):
 # 💻 Corpo Principale dell'App
 # =================================================================
 
+# Esegue la gestione della sidebar (e del selettore lingua)
 handle_kofi_access()
 
 st.title(get_text('main_title'))
@@ -263,9 +297,13 @@ if st.button(get_text('button_generate'), type="primary", use_container_width=Tr
         st.warning(get_text('unlock_cta_warning').format(KOFI_MEMBERSHIP_LINK))
         st.stop()
         
+    # Ottiene le parole da escludere (solo se in modalità PRO, altrimenti è una stringa vuota)
+    exclude_keywords = st.session_state.get('exclude_keywords_input', '') if st.session_state.is_pro else ''
+        
     # B. Esecuzione della Logica
     with st.spinner(get_text('analysis_in_progress')):
-        high_perf_tags, low_comp_tags = get_optimized_tags(search_query)
+        # Passa le parole da escludere alla funzione di estrazione
+        high_perf_tags, low_comp_tags = get_optimized_tags(search_query, exclude_keywords)
 
         if high_perf_tags or low_comp_tags:
             
