@@ -1,5 +1,5 @@
 streamlit
 requests
 beautifulsoup4
-pypdf
 pandas
+youtube-search-python
