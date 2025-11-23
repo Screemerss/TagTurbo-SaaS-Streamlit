@@ -3,3 +3,4 @@ requests
 beautifulsoup4
 pandas
 youtube-search-python==1.4.1
+setuptools
